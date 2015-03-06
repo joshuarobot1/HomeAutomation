@@ -49,9 +49,9 @@ SS = 8
 
 #define NODEID        1    //unique for each node on same network
 #define NETWORKID     101  //the same on all nodes that talk to each other
-#define FREQUENCY   RF69_433MHZ
+//#define FREQUENCY   RF69_433MHZ
 //#define FREQUENCY   RF69_868MHZ
-//#define FREQUENCY     RF69_915MHZ
+#define FREQUENCY     RF69_915MHZ
 #define ENCRYPTKEY    "xxxxxxxxxxxxxxxx" //exactly the same 16 characters/bytes on all nodes!
 #define IS_RFM69HW    //uncomment only for RFM69HW! Leave out if you have RFM69W!
 #define ACK_TIME      30 // max # of ms to wait for an ack
@@ -65,7 +65,7 @@ byte ackCount=0;
 #include <mosquitto.h>
 
 /* How many seconds the broker should wait between sending out
-* keep-alive messages. */
+ keep-alive messages. */
 #define KEEPALIVE_SECONDS 60
 /* Hostname and port for the MQTT broker. */
 #define BROKER_HOSTNAME "localhost"
@@ -78,31 +78,33 @@ int sendMQTT = 0;
 
 typedef struct {		
 	short           nodeID; 
-	short			sensorID;
+	short		sensorID;
 	unsigned long   var1_usl; 
 	float           var2_float; 
-	float			var3_float;	
+	float		var3_float;	
 } 
 Payload;
 Payload theData;
+Payload PayloadIn;
 
 typedef struct {
 	short           nodeID;
-	short			sensorID;		
+	short		sensorID;		
 	unsigned long   var1_usl;
 	float           var2_float;
-	float			var3_float;		//
+	float		var3_float;		//
 	int             var4_int;
 }
 SensorNode;
 SensorNode sensorNode;
+
 
 static void die(const char *msg);
 static bool set_callbacks(struct mosquitto *m);
 static bool connect(struct mosquitto *m);
 static int run_loop(struct mosquitto *m);
 
-static void MQTTSendInt(struct mosquitto * _client, int node, int sensor, int var, int val);
+static void MQTTSendInt(struct mosquitto* _client, int node, int sensor, int var, int val);
 static void MQTTSendULong(struct mosquitto* _client, int node, int sensor, int var, unsigned long val);
 static void MQTTSendFloat(struct mosquitto* _client, int node, int sensor, int var, float val);
 
@@ -131,10 +133,13 @@ int main(int argc, char* argv[]) {
 	rfm69->encrypt(ENCRYPTKEY);
 	rfm69->promiscuous(promiscuousMode);
 	LOG("\nListening at %d Mhz...", FREQUENCY==RF69_433MHZ ? 433 : FREQUENCY==RF69_868MHZ ? 868 : 915);
-
 	LOG("setup complete\n");
 
-	return run_loop(m);
+	// subscribe to mosquitto topics (must subscribe to all new outgoing commands)
+	const char* topic1 = "XXXX"; 
+	mosquitto_subscribe(m, 0, topic1, 0);	
+
+return run_loop(m);
 }  // end of setup
 
 /* Loop until it is explicitly halted or the network is lost, then clean up. */
@@ -214,6 +219,7 @@ static int run_loop(struct mosquitto *m) {
 	}//end if sendMQTT
 	}
 
+
 	mosquitto_destroy(m);
 	(void)mosquitto_lib_cleanup();
 
@@ -224,6 +230,7 @@ static int run_loop(struct mosquitto *m) {
 	}
 }
 
+	
 
 static void MQTTSendInt(struct mosquitto * _client, int node, int sensor, int var, int val) {
 	char buff_topic[6];
@@ -253,6 +260,8 @@ static void MQTTSendFloat(struct mosquitto* _client, int node, int sensor, int v
 	mosquitto_publish(_client, 0, buff_topic, strlen(buff_message), buff_message, 0, false);
 }
 
+
+
 // Handing of Mosquitto messages
 void callback(char* topic, byte* payload, unsigned int length) {
 	// handle message arrived
@@ -281,12 +290,34 @@ static void on_connect(struct mosquitto *m, void *udata, int res) {
 }
 
 /* Handle a message that just arrived via one of the subscriptions. */
-static void on_message(struct mosquitto *m, void *udata,
-const struct mosquitto_message *msg) {
+static void on_message(struct mosquitto *m, void *udata, const struct mosquitto_message *msg) {
 	if (msg == NULL) { return; }
 	LOG("-- got message @ %s: (%d, QoS %d, %s) '%s'\n",
 		msg->topic, msg->payloadlen, msg->qos, msg->retain ? "R" : "!r",
 		msg->payload);
+		
+	// create message structure
+	char* tpc = msg->topic;
+	unsigned long pld = *((int *)msg->payload);
+	char tpcN[2];
+	char tpcS[1];
+	
+	strncpy(tpcN, tpc, 2);
+	strncpy(tpcS, &tpc[2], 1);	
+
+	PayloadIn.nodeID = strtol(tpcN, NULL, 10);
+	PayloadIn.sensorID = strtol(tpcS, NULL, 10);
+	PayloadIn.var1_usl = pld-48;
+	PayloadIn.var2_float = 0;
+	PayloadIn.var3_float = 0;
+
+	//LOG(" %d \n", PayloadIn.nodeID);
+	//LOG(" %d \n", PayloadIn.sensorID);
+	//LOG(" %d \n", PayloadIn.var1_usl);
+
+	rfm69->send(PayloadIn.nodeID, &PayloadIn, sizeof(PayloadIn));
+
+	LOG("-- sent message to node %d \n", PayloadIn.nodeID);
 
 }
 
@@ -296,8 +327,7 @@ static void on_publish(struct mosquitto *m, void *udata, int m_id) {
 }
 
 /* Successful subscription hook. */
-static void on_subscribe(struct mosquitto *m, void *udata, int mid,
-		int qos_count, const int *granted_qos) {
+static void on_subscribe(struct mosquitto *m, void *udata, int mid, int qos_count, const int *granted_qos) {
 	LOG("-- subscribed successfully\n");
 }
 
@@ -309,4 +339,3 @@ static bool set_callbacks(struct mosquitto *m) {
 	mosquitto_message_callback_set(m, on_message);
 return true;
 }
-
